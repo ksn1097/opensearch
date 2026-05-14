@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: search-service
+  profiles:
+    active: local
+
+server:
+  port: 8087
+
+logging:
+  level:
+    root: INFO
+
+opensearch:
+  local:
+    host: localhost
+    port: 9200
+    scheme: https
+    username: admin
+    password: Tiger@Tiger123
