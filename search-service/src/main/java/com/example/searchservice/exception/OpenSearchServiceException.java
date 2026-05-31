@@ -1,4 +1,4 @@
-                                                                         package com.example.searchservice.exception;
+package com.example.searchservice.exception;
 
 public class OpenSearchServiceException extends RuntimeException {
     public OpenSearchServiceException(String message, Throwable cause) {

@@ -3,6 +3,15 @@ spring:
     name: search-service
   profiles:
     active: local
+  cloud:
+    aws:
+      region:
+        static: us-east-1
+      sqs:
+        listener:
+          max-inflight-messages-per-queue: 50
+          max-messages-per-poll: 50
+          poll-timeout: 10s
 
 server:
   port: 8087
@@ -10,6 +19,33 @@ server:
 logging:
   level:
     root: INFO
+
+app:
+  sqs:
+    debezium-queue-name: shared-service-debezium-queue
+    listener:
+      max-concurrent-messages: 50
+      max-messages-per-poll: 50
+      poll-timeout-seconds: 10
+      message-visibility-seconds: 60
+  debezium-ingestion:
+    table-index-map:
+      spt_identity: identity_index
+      spt_identity_entitlement: identity_entitlement_index
+      spt_application: application_index
+    default-id-fields:
+      - documentId
+      - document_id
+      - id
+      - identity_id
+    table-id-fields:
+      spt_identity:
+        - id
+        - identity_id
+      spt_identity_entitlement:
+        - id
+      spt_application:
+        - id
 
 opensearch:
   local:

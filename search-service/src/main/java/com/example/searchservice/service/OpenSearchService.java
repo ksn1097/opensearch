@@ -2,6 +2,7 @@ package com.example.searchservice.service;
 
 import com.example.searchservice.dto.BulkIndexRequest;
 import com.example.searchservice.dto.IndexRequest;
+import com.example.searchservice.dto.OpenSearchOperationResponse;
 import com.example.searchservice.dto.SearchRequest;
 import com.example.searchservice.exception.OpenSearchServiceException;
 import lombok.RequiredArgsConstructor;
@@ -32,14 +33,19 @@ public class OpenSearchService {
             retryFor = OpenSearchServiceException.class,
             backoff = @Backoff(delay = 2000)
     )
-    public String indexDocument(IndexRequest request) {
+    public OpenSearchOperationResponse indexDocument(IndexRequest request) {
         try {
             IndexResponse response = client.index(i -> i
                     .index(request.getIndexName())
                     .id(request.getDocumentId())
                     .document(request.getDocument())
             );
-            return response.result().jsonValue();
+            return new OpenSearchOperationResponse(
+                    response.result().jsonValue(),
+                    request.getIndexName(),
+                    request.getDocumentId(),
+                    1
+            );
         } catch (Exception e) {
             throw new OpenSearchServiceException("Failed to index document", e);
         }
@@ -74,28 +80,27 @@ public class OpenSearchService {
         }
     }
 
-    public String deleteDocument(String indexName, String documentId) {
+    public OpenSearchOperationResponse deleteDocument(String indexName, String documentId) {
         try {
             DeleteResponse response = client.delete(d -> d
                     .index(indexName)
                     .id(documentId)
             );
-            return response.result().jsonValue();
+            return new OpenSearchOperationResponse(response.result().jsonValue(), indexName, documentId, 1);
         } catch (Exception e) {
             throw new OpenSearchServiceException("Failed to delete document", e);
         }
     }
 
-    public String createIndex(String indexName) {
+    public OpenSearchOperationResponse createIndex(String indexName) {
         try {
             org.opensearch.client.transport.endpoints.BooleanResponse existsResponse = client.indices().exists(e -> e.index(indexName));
             if (existsResponse.value()) {
-                return "index already present";
+                return new OpenSearchOperationResponse("already_present", indexName, null, null);
             }
-            // Create index
             org.opensearch.client.opensearch.indices.CreateIndexResponse createResponse = client.indices().create(c -> c.index(indexName));
             if (Boolean.TRUE.equals(createResponse.acknowledged())) {
-                return "content created";
+                return new OpenSearchOperationResponse("created", indexName, null, null);
             } else {
                 throw new OpenSearchServiceException("Index creation not acknowledged");
             }
@@ -104,7 +109,7 @@ public class OpenSearchService {
         }
     }
 
-    public String bulkIndexDocuments(BulkIndexRequest request) {
+    public OpenSearchOperationResponse bulkIndexDocuments(BulkIndexRequest request) {
         try {
             BulkRequest.Builder br = new BulkRequest.Builder();
             for (IndexRequest docReq : request.getDocuments()) {
@@ -126,7 +131,7 @@ public class OpenSearchService {
                 }
                 throw new OpenSearchServiceException(errorMsg.toString());
             }
-            return "Bulk indexing successful: " + response.items().size() + " documents indexed.";
+            return new OpenSearchOperationResponse("indexed", null, null, response.items().size());
         } catch (Exception e) {
             throw new OpenSearchServiceException("Failed to bulk index documents", e);
         }
