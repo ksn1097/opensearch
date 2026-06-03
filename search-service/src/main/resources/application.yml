@@ -22,17 +22,16 @@ logging:
 
 app:
   sqs:
-    debezium-queue-name: shared-service-debezium-queue
+    identity-queue-name: identity-debezium-queue
     listener:
       max-concurrent-messages: 50
       max-messages-per-poll: 50
       poll-timeout-seconds: 10
       message-visibility-seconds: 60
   debezium-ingestion:
+    default-table-name: spt_identity
     table-index-map:
       spt_identity: identity_index
-      spt_identity_entitlement: identity_entitlement_index
-      spt_application: application_index
     default-id-fields:
       - documentId
       - document_id

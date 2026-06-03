@@ -32,17 +32,15 @@ DELETE /api/v1/documents/{indexName}/{documentId}
 
 ## Debezium Event Ingestion
 
-The service also listens to the SQS queue configured by `app.sqs.debezium-queue-name`.
-This queue is expected to receive already-parsed Debezium routed payloads directly or through an SNS subscription envelope.
+The service also listens to the SQS queue configured by `app.sqs.identity-queue-name`.
+This queue is expected to receive already-parsed Debezium identity payloads directly or through an SNS subscription envelope.
 
 Configured table routing:
 
 - `spt_identity` -> `identity_index`
-- `spt_identity_entitlement` -> `identity_entitlement_index`
-- `spt_application` -> `application_index`
 
 Insert, update, and snapshot-style payloads are indexed into the configured table index.
-Delete events are ignored for now.
+Delete events remove the corresponding document from the configured table index.
 
 ## Sample Index Request
 

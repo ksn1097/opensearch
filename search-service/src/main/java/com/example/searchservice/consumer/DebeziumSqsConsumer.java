@@ -14,7 +14,7 @@ public class DebeziumSqsConsumer {
     private final DebeziumOpenSearchIngestionService ingestionService;
 
     @SqsListener(
-            value = "${app.sqs.debezium-queue-name}",
+            value = "${app.sqs.identity-queue-name}",
             maxConcurrentMessages = "${app.sqs.listener.max-concurrent-messages}",
             maxMessagesPerPoll = "${app.sqs.listener.max-messages-per-poll}",
             pollTimeoutSeconds = "${app.sqs.listener.poll-timeout-seconds}",

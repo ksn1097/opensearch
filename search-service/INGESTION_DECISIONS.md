@@ -11,8 +11,8 @@ The application does not add a separate custom retry mechanism around OpenSearch
 The current flow is:
 
 ```text
-SQS receives up to 50 messages
--> application parses and routes messages by table name
+SQS receives up to 50 messages from the identity table queue
+-> application parses and routes messages to the identity OpenSearch index
 -> application sends one bulk indexing request to OpenSearch
 -> if indexing succeeds, listener returns successfully
 -> Spring Cloud AWS acknowledges/deletes the SQS messages
@@ -126,59 +126,55 @@ Questions to confirm:
 - Should batch size be different for migration/snapshot traffic and realtime traffic?
 - Should load testing be done before finalizing the production batch size?
 
-## Decision: Delete Events Are Ignored for Now
+## Decision: Delete Events Remove Documents from OpenSearch
 
-Delete handling is not implemented yet because the architecture still needs confirmation on whether delete events should remove documents from OpenSearch or mark them inactive.
+Delete handling is now implemented for the identity ingestion flow.
 
 Current behavior:
 
 ```text
 payload.op = d
--> message is skipped
--> no OpenSearch delete is performed
+-> resolve document ID from the payload
+-> delete document from identity_index
 ```
 
-This should be revisited once the delete strategy is finalized.
+This means delete events currently perform a hard delete in OpenSearch.
 
-### Delete Operation Questions to Confirm
+### Delete Operation Follow-ups
 
-- Should delete events physically remove documents from OpenSearch?
 - Should delete events update the document with a soft-delete flag instead, such as `active=false` or `deleted=true`?
 - If soft delete is required, what field name and value should be used?
-- Should delete behavior be the same for all tables, or can it differ by table/index?
+- Should delete behavior be the same for all future table queues, or can it differ by table/index?
 - If the document does not exist in OpenSearch during delete processing, should that be treated as success or failure?
 - Should delete events participate in the same SQS retry/DLQ flow as insert/update events?
 - Do delete events require audit logging before they are skipped, deleted, or soft-deleted?
-- Should delete events be ignored only temporarily, or should the application store them somewhere for replay once delete handling is finalized?
 
-## Open Question: Queue and Routing Contract
+## Decision: Separate Queue per Table
 
-The current implementation assumes a single SQS queue can contain messages for multiple tables. The application reads the table name from the message payload and maps it to the target OpenSearch index using configuration.
+The clarified direction is to use a separate SQS queue for each table. The current implementation only handles the identity table queue.
 
-Current assumption:
+Current implementation:
 
 ```text
-one shared SQS queue
--> message contains table/application/routing information
--> application maps table name to OpenSearch index
+identity table queue
+-> one SQS listener
+-> default table = spt_identity
+-> target index = identity_index
 ```
+
+Because this listener is tied to the identity queue, the payload does not need to contain the table name for the current flow. If the table name is missing, the application defaults to `spt_identity`.
 
 Current configurable mapping:
 
 ```text
 spt_identity -> identity_index
-spt_identity_entitlement -> identity_entitlement_index
-spt_application -> application_index
 ```
 
-This needs confirmation because the upstream Debezium parsing service may choose a different contract.
+### Routing Follow-ups
 
-### Routing Questions to Confirm
-
-- Will all table events arrive in one shared queue, or will each table have a separate queue?
-- If each table has a separate queue, should the application use one listener per queue?
+- For future tables, should the application use one listener per queue?
 - If each table has a separate queue, do we still need table name in the payload?
-- Will the message payload include the source table name?
+- Will the message payload include the source table name even though the queue is table-specific?
 - What will the exact table field be called: `table`, `tableName`, `source.table`, or something else?
 - Will the payload include the target OpenSearch index name directly?
 - If the payload includes the target index name, should the application trust it or still validate it against a configured allow-list?
@@ -190,7 +186,29 @@ This needs confirmation because the upstream Debezium parsing service may choose
 - Should there be a separate queue for migration/snapshot events and realtime events, or will both arrive in the same queue?
 - If migration and realtime events use the same queue, do they need different OpenSearch handling?
 
-### Current Implementation Until Confirmed
+## Open Question: Identity Document Mapping
+
+The current implementation transforms the incoming identity payload into a temporary OpenSearch document shape:
+
+```json
+{
+  "identity": {
+    "...": "incoming payload fields"
+  }
+}
+```
+
+A TODO exists in code because the final identity OpenSearch mapping is not confirmed yet.
+
+Questions to confirm:
+
+- What should the final identity document JSON structure be?
+- Should the OpenSearch document store the payload as-is or flatten/rename fields?
+- Are any fields required to be enriched before indexing?
+- Are any fields sensitive and should be excluded?
+- What field should be used as the stable OpenSearch document ID?
+
+### Current Parser Compatibility Until Payload Is Finalized
 
 Until the final contract is confirmed, the parser checks common table-name locations:
 

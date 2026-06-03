@@ -21,6 +21,7 @@ public class DebeziumOpenSearchEventParser {
 
     private final ObjectMapper objectMapper;
     private final DebeziumIngestionProperties properties;
+    private final IdentityDocumentTransformer identityDocumentTransformer;
 
     public Optional<DebeziumOpenSearchEvent> parse(String rawMessage) {
         try {
@@ -32,11 +33,6 @@ public class DebeziumOpenSearchEventParser {
             }
 
             String operation = payload.path("op").asText(null);
-            if ("d".equals(operation)) {
-                // TODO: Delete handling is pending confirmation from architecture/product.
-                return Optional.empty();
-            }
-
             String tableName = resolveTableName(root, payload);
             String indexName = properties.tableIndexMap().get(tableName);
 
@@ -51,9 +47,12 @@ public class DebeziumOpenSearchEventParser {
             }
 
             String documentId = resolveDocumentId(tableName, row);
-            Map<String, Object> document = objectMapper.convertValue(row, MAP_TYPE);
+            Map<String, Object> rowPayload = objectMapper.convertValue(row, MAP_TYPE);
+            Map<String, Object> document = "d".equals(operation)
+                    ? Map.of()
+                    : identityDocumentTransformer.transform(rowPayload);
 
-            return Optional.of(new DebeziumOpenSearchEvent(tableName, indexName, documentId, document));
+            return Optional.of(new DebeziumOpenSearchEvent(tableName, operation, indexName, documentId, document));
         } catch (Exception e) {
             throw new IllegalArgumentException("Failed to parse Debezium OpenSearch event", e);
         }
@@ -70,13 +69,19 @@ public class DebeziumOpenSearchEventParser {
     }
 
     private String resolveTableName(JsonNode root, JsonNode payload) {
-        return firstText(
+        String tableName = firstText(
                 payload.path("tableName"),
                 payload.path("table"),
                 payload.path("source").path("table"),
                 root.path("tableName"),
                 root.path("table")
         );
+
+        if (tableName == null) {
+            return properties.defaultTableName();
+        }
+
+        return tableName;
     }
 
     private JsonNode resolveRecordPayload(JsonNode payload) {
