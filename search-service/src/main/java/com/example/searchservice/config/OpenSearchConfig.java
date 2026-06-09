@@ -13,6 +13,7 @@ import org.opensearch.client.json.jackson.JacksonJsonpMapper;
 import org.opensearch.client.opensearch.OpenSearchClient;
 import org.opensearch.client.transport.OpenSearchTransport;
 import org.opensearch.client.transport.rest_client.RestClientTransport;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -24,18 +25,30 @@ import java.security.NoSuchAlgorithmException;
 @Profile("local")
 public class OpenSearchConfig {
 
+    @Value("${opensearch.local.host}")
+    private String host;
+
+    @Value("${opensearch.local.port}")
+    private int port;
+
+    @Value("${opensearch.local.scheme}")
+    private String scheme;
+
+    @Value("${opensearch.local.username}")
+    private String username;
+
+    @Value("${opensearch.local.password}")
+    private String password;
+
     @Bean
     public OpenSearchClient openSearchClient() {
         try {
-            String username = "admin";
-            String password = "Tiger@Tiger123";
-
             BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
             credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(username, password));
 
             SSLContextBuilder sslBuilder = SSLContextBuilder.create();
             sslBuilder.loadTrustMaterial(null, TrustAllStrategy.INSTANCE);
-            RestClientBuilder builder = RestClient.builder(new HttpHost("localhost", 9200, "https"))
+            RestClientBuilder builder = RestClient.builder(new HttpHost(host, port, scheme))
                 .setHttpClientConfigCallback(httpClientBuilder -> {
                             try {
                                 return httpClientBuilder

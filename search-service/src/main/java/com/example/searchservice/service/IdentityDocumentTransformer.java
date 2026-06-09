@@ -1,17 +1,27 @@
 package com.example.searchservice.service;
 
+import com.example.searchservice.dto.IdentityPayloadDto;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 @Component
+@RequiredArgsConstructor
 public class IdentityDocumentTransformer {
 
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
+    };
+
+    private final ObjectMapper objectMapper;
+
     public Map<String, Object> transform(Map<String, Object> payload) {
-        // TODO: Replace this temporary identity document shape once the OpenSearch mapping is confirmed.
-        Map<String, Object> document = new LinkedHashMap<>();
-        document.put("identity", payload);
+        IdentityPayloadDto identityPayload = objectMapper.convertValue(payload, IdentityPayloadDto.class);
+        Map<String, Object> document = objectMapper.convertValue(identityPayload, MAP_TYPE);
+        document.values().removeIf(Objects::isNull);
         return document;
     }
 }

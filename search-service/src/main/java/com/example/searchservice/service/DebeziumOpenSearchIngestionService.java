@@ -20,7 +20,6 @@ public class DebeziumOpenSearchIngestionService {
 
     public void process(List<String> rawMessages) {
         List<IndexRequest> indexRequests = new ArrayList<>();
-        List<DebeziumOpenSearchEvent> deleteEvents = new ArrayList<>();
         int skipped = 0;
 
         for (String rawMessage : rawMessages) {
@@ -31,11 +30,7 @@ public class DebeziumOpenSearchIngestionService {
                 continue;
             }
 
-            if (event.delete()) {
-                deleteEvents.add(event);
-            } else {
-                indexRequests.add(toIndexRequest(event));
-            }
+            indexRequests.add(toIndexRequest(event));
         }
 
         if (!indexRequests.isEmpty()) {
@@ -44,14 +39,9 @@ public class DebeziumOpenSearchIngestionService {
             openSearchService.bulkIndexDocuments(bulkIndexRequest);
         }
 
-        for (DebeziumOpenSearchEvent deleteEvent : deleteEvents) {
-            openSearchService.deleteDocument(deleteEvent.indexName(), deleteEvent.documentId());
-        }
-
         log.info(
-                "Processed Debezium SQS batch: indexed={}, deleted={}, skipped={}",
+                "Processed Debezium SQS batch: indexed={}, skipped={}",
                 indexRequests.size(),
-                deleteEvents.size(),
                 skipped
         );
     }

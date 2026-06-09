@@ -7,16 +7,12 @@ import java.util.Map;
 
 @ConfigurationProperties(prefix = "app.debezium-ingestion")
 public record DebeziumIngestionProperties(
-        String defaultTableName,
-        Map<String, String> tableIndexMap,
-        Map<String, List<String>> tableIdFields,
-        List<String> defaultIdFields
+        Map<String, String> dataRecordTypeIndexMap,
+        Map<String, List<String>> dataRecordTypeIdFields
 ) {
 
     public DebeziumIngestionProperties {
-        defaultTableName = defaultTableName == null || defaultTableName.isBlank() ? "spt_identity" : defaultTableName;
-        tableIndexMap = tableIndexMap == null ? Map.of() : Map.copyOf(tableIndexMap);
-        tableIdFields = tableIdFields == null ? Map.of() : Map.copyOf(tableIdFields);
-        defaultIdFields = defaultIdFields == null ? List.of("id", "identity_id") : List.copyOf(defaultIdFields);
+        dataRecordTypeIndexMap = dataRecordTypeIndexMap == null ? Map.of() : Map.copyOf(dataRecordTypeIndexMap);
+        dataRecordTypeIdFields = dataRecordTypeIdFields == null ? Map.of() : Map.copyOf(dataRecordTypeIdFields);
     }
 }

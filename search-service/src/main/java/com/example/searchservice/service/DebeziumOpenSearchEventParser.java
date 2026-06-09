@@ -2,7 +2,7 @@ package com.example.searchservice.service;
 
 import com.example.searchservice.config.DebeziumIngestionProperties;
 import com.example.searchservice.dto.DebeziumOpenSearchEvent;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.example.searchservice.dto.DebeziumQueueEvent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -16,9 +16,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class DebeziumOpenSearchEventParser {
 
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
-    };
-
     private final ObjectMapper objectMapper;
     private final DebeziumIngestionProperties properties;
     private final IdentityDocumentTransformer identityDocumentTransformer;
@@ -26,33 +23,31 @@ public class DebeziumOpenSearchEventParser {
     public Optional<DebeziumOpenSearchEvent> parse(String rawMessage) {
         try {
             JsonNode root = unwrapSnsMessage(objectMapper.readTree(rawMessage));
+            DebeziumQueueEvent queueEvent = objectMapper.convertValue(root, DebeziumQueueEvent.class);
             JsonNode payload = root.path("payload");
 
-            if (payload.isMissingNode() || payload.isNull()) {
+            if (queueEvent.getPayload() == null || payload.isMissingNode() || payload.isNull()) {
                 return Optional.empty();
             }
 
-            String operation = payload.path("op").asText(null);
-            String tableName = resolveTableName(root, payload);
-            String indexName = properties.tableIndexMap().get(tableName);
+            String dataRecordType = resolveDataRecordType(root, payload, queueEvent);
+            String indexName = resolveIndexName(dataRecordType);
 
-            if (tableName == null || indexName == null) {
+            if (dataRecordType == null || indexName == null) {
                 return Optional.empty();
             }
 
-            JsonNode row = resolveRecordPayload(payload);
+            JsonNode row = payload;
 
             if (row.isMissingNode() || row.isNull()) {
                 return Optional.empty();
             }
 
-            String documentId = resolveDocumentId(tableName, row);
-            Map<String, Object> rowPayload = objectMapper.convertValue(row, MAP_TYPE);
-            Map<String, Object> document = "d".equals(operation)
-                    ? Map.of()
-                    : identityDocumentTransformer.transform(rowPayload);
+            String documentId = resolveDocumentId(dataRecordType, row);
+            Map<String, Object> rowPayload = queueEvent.getPayload();
+            Map<String, Object> document = identityDocumentTransformer.transform(rowPayload);
 
-            return Optional.of(new DebeziumOpenSearchEvent(tableName, operation, indexName, documentId, document));
+            return Optional.of(new DebeziumOpenSearchEvent(dataRecordType, indexName, documentId, document));
         } catch (Exception e) {
             throw new IllegalArgumentException("Failed to parse Debezium OpenSearch event", e);
         }
@@ -68,36 +63,27 @@ public class DebeziumOpenSearchEventParser {
         return objectMapper.readTree(message.asText());
     }
 
-    private String resolveTableName(JsonNode root, JsonNode payload) {
-        String tableName = firstText(
-                payload.path("tableName"),
-                payload.path("table"),
-                payload.path("source").path("table"),
-                root.path("tableName"),
-                root.path("table")
+    private String resolveDataRecordType(JsonNode root, JsonNode payload, DebeziumQueueEvent queueEvent) {
+        return firstText(
+                root.path("dataRecordType"),
+                payload.path("dataRecordType")
         );
-
-        if (tableName == null) {
-            return properties.defaultTableName();
-        }
-
-        return tableName;
     }
 
-    private JsonNode resolveRecordPayload(JsonNode payload) {
-        for (String fieldName : List.of("record", "data", "document", "after")) {
-            JsonNode candidate = payload.path(fieldName);
-
-            if (!candidate.isMissingNode() && !candidate.isNull()) {
-                return candidate;
-            }
+    private String resolveIndexName(String dataRecordType) {
+        if (dataRecordType == null) {
+            return null;
         }
 
-        return payload;
+        return properties.dataRecordTypeIndexMap().get(dataRecordType);
     }
 
-    private String resolveDocumentId(String tableName, JsonNode row) {
-        List<String> idFields = properties.tableIdFields().getOrDefault(tableName, properties.defaultIdFields());
+    private String resolveDocumentId(String dataRecordType, JsonNode row) {
+        List<String> idFields = properties.dataRecordTypeIdFields().get(dataRecordType);
+
+        if (idFields == null || idFields.isEmpty()) {
+            throw new IllegalArgumentException("No document id fields configured for dataRecordType " + dataRecordType);
+        }
 
         for (String idField : idFields) {
             JsonNode idValue = row.path(idField);
@@ -107,7 +93,7 @@ public class DebeziumOpenSearchEventParser {
             }
         }
 
-        throw new IllegalArgumentException("Unable to resolve document id for table " + tableName);
+        throw new IllegalArgumentException("Unable to resolve document id for dataRecordType " + dataRecordType);
     }
 
     private String firstText(JsonNode... nodes) {

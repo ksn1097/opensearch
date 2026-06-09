@@ -17,7 +17,7 @@ import software.amazon.awssdk.regions.Region;
 import java.io.IOException;
 
 @Configuration
-@Profile("aws")
+@Profile({"aws", "dev"})
 public class AwsOpenSearchConfig {
 
     @Value("${opensearch.aws.host}")

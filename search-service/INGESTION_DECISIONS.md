@@ -11,8 +11,10 @@ The application does not add a separate custom retry mechanism around OpenSearch
 The current flow is:
 
 ```text
-SQS receives up to 50 messages from the identity table queue
--> application parses and routes messages to the identity OpenSearch index
+SQS receives up to 50 messages
+-> application parses the Debezium queue event
+-> application routes by dataRecordType
+-> application transforms payload to the current identity DTO shape
 -> application sends one bulk indexing request to OpenSearch
 -> if indexing succeeds, listener returns successfully
 -> Spring Cloud AWS acknowledges/deletes the SQS messages
@@ -32,14 +34,14 @@ The retry behavior is therefore delegated to SQS redelivery instead of being imp
 
 ### Why This Is Acceptable for Now
 
-OpenSearch indexing is currently designed to be idempotent because every document is indexed using a deterministic document ID from the message payload, such as `documentId`, `document_id`, `id`, or a table-specific ID field.
+OpenSearch indexing is currently designed to be idempotent because every document is indexed using a deterministic document ID from the message payload. For `IDENTITY`, the configured document ID field is `iiqId`.
 
 If the same message is processed more than once, the service writes to the same OpenSearch index and the same OpenSearch document ID. This means the document is replaced or updated in place instead of creating duplicate documents.
 
 Example:
 
 ```text
-message for spt_identity with id = 123
+message with dataRecordType = IDENTITY and iiqId = 123
 -> routed to identity_index
 -> indexed with OpenSearch document ID 123
 
@@ -49,7 +51,7 @@ same message retried
 -> existing document is overwritten, not duplicated
 ```
 
-This keeps the implementation simple while the payload contract and final architecture decisions are still being confirmed.
+This keeps the implementation simple while the remaining retry and DLQ architecture decisions are still being confirmed.
 
 ### Known Trade-off
 
@@ -88,7 +90,7 @@ These can be considered after the payload contract and failure-handling requirem
 - Add per-message acknowledgement if we want successful messages in a batch to be deleted while failed messages are retried.
 - Add an application-level retry with backoff for transient OpenSearch failures.
 - Add external versioning if Debezium/event metadata provides a reliable ordering field, so older events cannot overwrite newer documents.
-- Define table-specific document ID rules once the final payload shape is confirmed.
+- Define dataRecordType-specific document ID rules for future event types.
 - Add metrics for indexed, skipped, failed, and retried messages.
 - Add structured logs with table name, index name, document ID, and failure reason.
 
@@ -126,22 +128,28 @@ Questions to confirm:
 - Should batch size be different for migration/snapshot traffic and realtime traffic?
 - Should load testing be done before finalizing the production batch size?
 
-## Decision: Delete Events Remove Documents from OpenSearch
+## Decision: Delete Handling Is Out of Scope for Current Event Contract
 
-Delete handling is now implemented for the identity ingestion flow.
+The current event contract does not provide an operation field, so the application does not attempt to detect insert, update, snapshot, or delete operations.
 
 Current behavior:
 
 ```text
-payload.op = d
--> resolve document ID from the payload
--> delete document from identity_index
+valid queue event
+-> route by dataRecordType
+-> convert payload to DTO
+-> index document into OpenSearch
 ```
 
-This means delete events currently perform a hard delete in OpenSearch.
+Delete handling should be revisited only if a future event contract includes delete-specific information.
 
 ### Delete Operation Follow-ups
 
+- How will delete records be represented in the queue event?
+- Will the event contract include an operation field?
+- Will delete events include the same `payload` fields as normal indexing events?
+- Which field should be used as the OpenSearch document ID for delete events?
+- Should delete events physically remove documents from OpenSearch?
 - Should delete events update the document with a soft-delete flag instead, such as `active=false` or `deleted=true`?
 - If soft delete is required, what field name and value should be used?
 - Should delete behavior be the same for all future table queues, or can it differ by table/index?
@@ -149,84 +157,85 @@ This means delete events currently perform a hard delete in OpenSearch.
 - Should delete events participate in the same SQS retry/DLQ flow as insert/update events?
 - Do delete events require audit logging before they are skipped, deleted, or soft-deleted?
 
-## Decision: Separate Queue per Table
+## Decision: Route by dataRecordType
 
-The clarified direction is to use a separate SQS queue for each table. The current implementation only handles the identity table queue.
+The clarified event contract includes `dataRecordType`, which represents the table/data type. The application routes to the OpenSearch index using `dataRecordType`.
 
 Current implementation:
 
 ```text
-identity table queue
--> one SQS listener
--> default table = spt_identity
+queue event
+-> dataRecordType = IDENTITY
 -> target index = identity_index
 ```
-
-Because this listener is tied to the identity queue, the payload does not need to contain the table name for the current flow. If the table name is missing, the application defaults to `spt_identity`.
 
 Current configurable mapping:
 
 ```text
-spt_identity -> identity_index
+IDENTITY -> identity_index
 ```
 
 ### Routing Follow-ups
 
-- For future tables, should the application use one listener per queue?
-- If each table has a separate queue, do we still need table name in the payload?
-- Will the message payload include the source table name even though the queue is table-specific?
-- What will the exact table field be called: `table`, `tableName`, `source.table`, or something else?
+- Confirm whether DevOps will provide a separate queue for each table/dataRecordType or one queue with multiple dataRecordType values.
+- If each table has a separate queue, should the application use one listener per queue?
+- If all table events arrive in one queue, should every dataRecordType be mapped in one config block?
 - Will the payload include the target OpenSearch index name directly?
 - If the payload includes the target index name, should the application trust it or still validate it against a configured allow-list?
 - Will the payload include an application/domain name in addition to table name?
-- If application name is included, does routing use application name, table name, or both?
-- Should routing be fully configuration-driven, or should it be hardcoded for the confirmed IIQ tables?
-- What should happen when the application receives an event for an unknown table?
-- Should unknown-table messages be skipped, sent to DLQ, or stored for investigation?
+- If application name is included, does routing use application name, dataRecordType, or both?
+- Should routing be fully configuration-driven, or should it be hardcoded for confirmed dataRecordType values?
+- What should happen when the application receives an event for an unknown dataRecordType?
+- Should unknown dataRecordType messages be skipped, sent to DLQ, or stored for investigation?
 - Should there be a separate queue for migration/snapshot events and realtime events, or will both arrive in the same queue?
 - If migration and realtime events use the same queue, do they need different OpenSearch handling?
 
-## Open Question: Identity Document Mapping
+## DevOps Queue Details
 
-The current implementation transforms the incoming identity payload into a temporary OpenSearch document shape:
-
-```json
-{
-  "identity": {
-    "...": "incoming payload fields"
-  }
-}
-```
-
-A TODO exists in code because the final identity OpenSearch mapping is not confirmed yet.
-
-Questions to confirm:
-
-- What should the final identity document JSON structure be?
-- Should the OpenSearch document store the payload as-is or flatten/rename fields?
-- Are any fields required to be enriched before indexing?
-- Are any fields sensitive and should be excluded?
-- What field should be used as the stable OpenSearch document ID?
-
-### Current Parser Compatibility Until Payload Is Finalized
-
-Until the final contract is confirmed, the parser checks common table-name locations:
+Current DevOps-provided details:
 
 ```text
-payload.tableName
-payload.table
-payload.source.table
-root.tableName
-root.table
+Topic ARN: arn:aws:sns:us-east-2:334672676108:ELV-IAM-OpenSearch-Events
+Producer role: arn:aws:iam::334672676108:role/oneiam-ims-eks-service-account-role
+
+Consumer queue: ONEIAM-OpenSearch-Events-To-SharedService-Queue
+Consumer queue URL: https://sqs.us-east-2.amazonaws.com/334672676108/ONEIAM-OpenSearch-Events-To-SharedService-Queue
+
+DLQ: ONEIAM-OpenSearch-Events-To-SharedService-Queue-DLQ
+DLQ URL: https://sqs.us-east-2.amazonaws.com/334672676108/ONEIAM-OpenSearch-Events-To-SharedService-Queue-DLQ
+
+Consumer role: arn:aws:iam::334672676108:role/oneiam-ssvc-eks-service-account-role
 ```
 
-The record body is read from the first available field:
+## Decision: Identity Document Mapping
+
+The identity fields captured from the shared screenshots are finalized.
+
+The current implementation converts the incoming identity payload map into `IdentityPayloadDto`, then converts that DTO back to a map for OpenSearch indexing. The OpenSearch Java client serializes that map as JSON when indexing the document.
+
+Only fields defined in `IdentityPayloadDto` are indexed. Unknown fields from the incoming payload are ignored.
+
+Current stable OpenSearch document ID field:
 
 ```text
-payload.record
-payload.data
-payload.document
-payload.after
+iiqId
 ```
 
-If none of those fields exist, the full `payload` object is indexed.
+### Current Parser Contract
+
+The parser expects the outer event shape:
+
+```text
+correlationId
+dataRecordType
+payload
+source
+```
+
+Routing is currently based on:
+
+```text
+dataRecordType
+```
+
+The `payload` object is converted to the identity DTO and then indexed into OpenSearch.
